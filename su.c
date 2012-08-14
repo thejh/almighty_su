@@ -1,10 +1,30 @@
-/**
- * This file compiles to the "su" setuid executable. It is designed to run for a
- * maximum of a few seconds, so memory is never freed for speed and safety - you
- * can introduce security-relevant bugs by free()ing variables, but just leaving
- * stuff in memory should always be fine. Hmm, I really like how the lines in my
- * header all have the same length - in a fixed-width font, it looks really nice
- */
+/*
+** Copyright 2012, Jann Horn <jannhorn@googlemail.com>
+** Copyright 2010, Adam Shanks (@ChainsDD)
+** Copyright 2008, Zinx Verituse (@zinxv)
+**
+** Licensed under the Apache License, Version 2.0 (the "License");
+** you may not use this file except in compliance with the License.
+** You may obtain a copy of the License at
+**
+**     http://www.apache.org/licenses/LICENSE-2.0
+**
+** Unless required by applicable law or agreed to in writing, software
+** distributed under the License is distributed on an "AS IS" BASIS,
+** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+** See the License for the specific language governing permissions and
+** limitations under the License.
+**
+**
+** This file compiles to the "su" setuid executable. It is designed to run for a
+** maximum of a few seconds, so memory is never freed for speed and safety - you
+** can introduce security-relevant bugs by free()ing variables, but just leaving
+** stuff in memory should always be fine. Hmm, I really like how the lines in my
+** header all have the same length - in a fixed-width font, it looks really nice
+** 
+** A few parts of this code were ripped from ChainsDD's su, but most of it was
+** rewritten by Jann Horn.
+*/
 
 #include <stdio.h>
 #include <stdlib.h>
