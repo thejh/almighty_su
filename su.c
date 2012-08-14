@@ -14,8 +14,10 @@
 #include <sys/types.h>
 #include <signal.h>
 #include <sys/wait.h>
+#include <pwd.h>
+#include <sys/prctl.h>
 
-enum uid_state { STATE_ALLOWED, STATE_DENIED, STATE_UNDEFINED }
+enum uid_state { STATE_ALLOWED, STATE_DENIED, STATE_UNDEFINED };
 
 void err(char *str) {
   fputs(str, stderr);
@@ -26,7 +28,7 @@ int get_uid_state(int uid) {
   if (uid == 0) return STATE_ALLOWED; // short-circuit for root
   
   char *file_path;
-  if (asprintf("/data/data/thejh.almighty/uid_ok/uid:%i", uid) != 0) err("allocation fail");
+  if (asprintf(&file_path, "/data/data/thejh.almighty/uid_ok/uid:%i", uid) < 0) err("allocation fail");
   FILE *f = fopen(file_path, "r");
   if (f == NULL) return STATE_UNDEFINED;
   int c = fgetc(f);
@@ -35,7 +37,7 @@ int get_uid_state(int uid) {
 }
 
 int get_own_app_uid() {
-  stat s;
+  struct stat s;
   if (stat("/data/data/thejh.almighty", &s) != 0) err("stat() on almighty app's directory failed");
   if (s.st_uid != s.st_gid) err("stat() returned weird data dir owner info");
   return s.st_uid;
@@ -58,19 +60,13 @@ void usage() {
 // fire-and-forget
 void send_request_intent(int uid, int pid) {
   char *cmd;
-  if (asprintf(cmd, "/system/bin/am start --ei pid %i --ei uid %i thejh.almighty/.AskPermissionActivity > /dev/null", pid, uid) != 0)
+  if (asprintf(&cmd, "/system/bin/am start --ei pid %i --ei uid %i thejh.almighty/.AskPermissionActivity > /dev/null", pid, uid) < 0)
     err("alloc failed");
-  // forking so that we can use a clean environment
-  int res = fork();
-  if (res == -1) err("fork() failed");
-  if (res == 0) {
-    clearenv();
-    setenv("LD_LIBRARY_PATH", "/vendor/lib:/system/lib", 1);
-    setenv("PATH", "/sbin:/system/sbin:/system/bin:/system/xbin", 1);
-    setenv("BOOTCLASSPATH", "/system/framework/core.jar:/system/framework/ext.jar:/system/framework/framework.jar:/system/framework/android.policy.jar:/system/framework/services.jar", 1);
-    system(cmd);
-    exit(0);
-  }
+  clearenv();
+  setenv("LD_LIBRARY_PATH", "/vendor/lib:/system/lib", 1);
+  setenv("PATH", "/sbin:/system/sbin:/system/bin:/system/xbin", 1);
+  setenv("BOOTCLASSPATH", "/system/framework/core.jar:/system/framework/ext.jar:/system/framework/framework.jar:/system/framework/android.policy.jar:/system/framework/services.jar", 1);
+  system(cmd);
 }
 
 int main(int argc, char *argv[]) {
@@ -87,6 +83,7 @@ int main(int argc, char *argv[]) {
     { "version",              no_argument,       NULL, 'v' },
     { NULL,                   0,                 NULL, 0   }
   };
+  int c;
   while ((c = getopt_long(argc, argv, "+c:hlmps:Vv", long_opts, NULL)) != -1) {
     switch (c) {
       /* instant-exit options */
@@ -115,7 +112,7 @@ int main(int argc, char *argv[]) {
         break;
       
       default:
-        fputs("ERROR: unimplemented or unknown option encountered", stderr);
+        fprintf(stderr, "ERROR: unimplemented or unknown option encountered: %hhi\n", c);
         usage();
         exit(1);
     }
@@ -133,7 +130,6 @@ int main(int argc, char *argv[]) {
       char *endptr = NULL;
       wanted_uid = strtoul(argv[optind], &endptr, 10);
       if (argv[optind][0] == '\0' /*empty ID string*/ || *endptr != '\0' /*not completely parsed*/) {
-        LOGE("Unknown id: %s\n", argv[optind]);
         fprintf(stderr, "Unknown id: %s\n", argv[optind]);
         exit(EXIT_FAILURE);
       }
@@ -146,6 +142,7 @@ int main(int argc, char *argv[]) {
   
   if (optind < argc && !strcmp(argv[optind], "--")) optind++;
   
+  if (setgroups(0, NULL)) err("setgroups() failed");
   int caller_uid = getuid();
   int own_app_uid = get_own_app_uid();
   
@@ -153,16 +150,15 @@ int main(int argc, char *argv[]) {
 retry:
   switch (get_uid_state(caller_uid)) {
     case STATE_ALLOWED: {
-      // permission granted - first thing we do is drop privileges so that vulns in this block
-      // won't have any impact
-      if (setresuid(wanted_uid, wanted_uid, wanted_uid) != 0) err("can't change uid!");
+      // permission granted - vulns from here on won't have any impact
       if (setresgid(wanted_uid, wanted_uid, wanted_uid) != 0) err("can't change gid!");
+      if (setresuid(wanted_uid, wanted_uid, wanted_uid) != 0) err("can't change uid!");
       
       if (!preserve_env) {
         struct passwd *pw = getpwuid(wanted_uid);
         if (pw) {
           setenv("HOME", pw->pw_dir, 1);
-          setenv("SHELL", ctx->to.shell, 1);
+          setenv("SHELL", shell, 1);
           setenv("USER", pw->pw_name, 1);
           setenv("LOGNAME", pw->pw_name, 1);
         }
@@ -198,12 +194,12 @@ retry:
         prctl(PR_SET_PDEATHSIG, SIGKILL);
         if (getppid() == 1) exit(1);
         // make target practice target shootable
-        if (setresuid(own_app_uid, own_app_uid, own_app_uid) != 0) err("can't change uid!");
         if (setresgid(own_app_uid, own_app_uid, own_app_uid) != 0) err("can't change gid!");
+        if (setresuid(own_app_uid, own_app_uid, own_app_uid) != 0) err("can't change uid!");
+        send_request_intent(caller_uid, getpid()); // mrproper's our environment
         pause();
         exit(0);
       }
-      send_request_intent(caller_uid, child_pid);
       waitpid(child_pid, NULL, 0);
       goto retry;
     }
